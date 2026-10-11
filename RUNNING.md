@@ -8,6 +8,8 @@
   iOS 26.5.
 - **Android:** Android Studio with the SDK, platform-tools and an emulator image, plus **JDK 17 or
   21** — not 25 (see below). The emulator needs roughly **12 GB of free disk** to boot.
+- **An internet connection**, even when testing offline behaviour: the article photos load from the
+  NZZ image CDN, which the control panel's **Unreachable** switch does not affect.
 
 This is an **Expo development build**, not Expo Go — the app uses `react-native-webview` and native
 configuration (Android cleartext HTTP, iOS local networking), so the Expo Go client cannot run it.
@@ -15,8 +17,11 @@ configuration (Android cleartext HTTP, iOS local networking), so the Expo Go cli
 ## 1. Install
 
 ```bash
-npm install
+npm ci
 ```
+
+`npm ci` installs exactly what the lockfile pins, which is what you want for a fresh clone. Use
+`npm install` only if you are deliberately changing dependencies.
 
 ## 2. Start the fixture server (leave it running)
 
@@ -50,6 +55,12 @@ npm start
 
 then press **`i`** to open the simulator. Press **`r`** to reload after a JavaScript change. You only
 need `npm run ios` again if native configuration or a native dependency changes.
+
+If more than one simulator is booted, name the one you want — otherwise the target is ambiguous:
+
+```bash
+npm run ios -- --device "iPhone 17"     # or the device UDID
+```
 
 ### Android
 
