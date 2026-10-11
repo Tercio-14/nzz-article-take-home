@@ -148,3 +148,73 @@ describe('fallbackTitle', () => {
     expect(fallbackTitle('8')).toBe('Article 8');
   });
 });
+
+describe('forget', () => {
+  it('asks again for a title that failed, which is the point of a refresh', async () => {
+    let failing = true;
+    const lookup = createTitleLookup(
+      async () => (failing ? respond(500, {}) : manifest('Now it works')),
+      BASE,
+    );
+
+    await expect(lookup.titleFor('4')).resolves.toBe('Article 4');
+
+    // Without forgetting, the placeholder would be served forever.
+    failing = false;
+
+    await expect(lookup.titleFor('4')).resolves.toBe('Article 4');
+
+    lookup.forget();
+
+    await expect(lookup.titleFor('4')).resolves.toBe('Now it works');
+  });
+
+  it('picks up a title that changed, for example after the article was republished', async () => {
+    let title = 'First version';
+    const lookup = createTitleLookup(async () => manifest(title), BASE);
+
+    await lookup.titleFor('2');
+    title = 'Second version';
+    lookup.forget();
+
+    await expect(lookup.titleFor('2')).resolves.toBe('Second version');
+  });
+
+  it('empties what it had cached', async () => {
+    const lookup = createTitleLookup(async () => manifest('Known'), BASE);
+
+    await lookup.titleFor('3');
+
+    expect(lookup.cached('3')).toBe('Known');
+
+    lookup.forget();
+
+    expect(lookup.cached('3')).toBeUndefined();
+  });
+
+  it('does not let a request already in flight refill the cache it just cleared', async () => {
+    // Definite assignment: the promise executor runs synchronously, so this is set before it is used.
+    let release!: (value: ResponseLike) => void;
+    const lookup = createTitleLookup(
+      () =>
+        new Promise<ResponseLike>(resolve => {
+          release = resolve;
+        }),
+      BASE,
+    );
+
+    const pending = lookup.titleFor('5');
+
+    lookup.forget();
+    release(manifest('Stale answer'));
+    await pending;
+
+    expect(lookup.cached('5')).toBeUndefined();
+  });
+
+  it('is harmless when there is nothing cached yet', () => {
+    const lookup = createTitleLookup(async () => manifest('Any'), BASE);
+
+    expect(() => lookup.forget()).not.toThrow();
+  });
+});

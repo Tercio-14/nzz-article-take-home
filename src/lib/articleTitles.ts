@@ -15,6 +15,14 @@ export type TitleLookup = {
   titleFor(articleId: string): Promise<string>;
   /** The cached title, or undefined when it has not been resolved yet. Never fetches. */
   cached(articleId: string): string | undefined;
+  /**
+   * Throws the cache away so the next lookup asks again.
+   *
+   * A lookup that failed caches its placeholder, which is right for ordinary rendering but wrong for
+   * a reader who has explicitly asked to refresh: without this, an article whose title could not be
+   * fetched the first time stays "Article 4" until the app restarts.
+   */
+  forget(): void;
 };
 
 /** What the strip shows when the title cannot be had. */
@@ -26,6 +34,10 @@ export function createTitleLookup(fetchFn: FetchLike, baseUrl: string): TitleLoo
   const base = baseUrl.replace(/\/+$/, '');
   const titles = new Map<string, string>();
   const inFlight = new Map<string, Promise<string>>();
+
+  // Bumped by `forget`, so a request that was already in flight cannot refill a cache that has since
+  // been cleared with the answer the reader just asked us to discard.
+  let generation = 0;
 
   const load = async (articleId: string): Promise<string> => {
     try {
@@ -50,7 +62,10 @@ export function createTitleLookup(fetchFn: FetchLike, baseUrl: string): TitleLoo
       const pending = inFlight.get(articleId);
       if (pending) return pending;
 
+      const startedAt = generation;
       const request = load(articleId).then(title => {
+        if (startedAt !== generation) return title;
+
         titles.set(articleId, title);
         inFlight.delete(articleId);
 
@@ -64,6 +79,12 @@ export function createTitleLookup(fetchFn: FetchLike, baseUrl: string): TitleLoo
 
     cached(articleId: string): string | undefined {
       return titles.get(articleId);
+    },
+
+    forget(): void {
+      generation += 1;
+      titles.clear();
+      inFlight.clear();
     },
   };
 }

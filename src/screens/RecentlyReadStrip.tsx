@@ -13,12 +13,26 @@ import { Palette } from '../theme';
 /** One lookup for the app's lifetime, so titles are fetched once and then come from its cache. */
 const titles = createTitleLookup(fetch, BASE_URL);
 
+/**
+ * Throws away the cached titles so the strip asks for them again.
+ *
+ * The front page's pull-to-refresh calls this: the ids come from app state and are always current,
+ * but a title that could not be fetched caches its placeholder, and a refresh is exactly when the
+ * reader expects another attempt.
+ */
+export function forgetRecentlyReadTitles(): void {
+  titles.forget();
+}
+
 export function RecentlyReadStrip({
   articleIds,
+  refreshedAt = 0,
   palette,
   onOpen,
 }: {
   articleIds: string[];
+  /** Changes when the cached titles have been thrown away and should be fetched again. */
+  refreshedAt?: number;
   palette: Palette;
   onOpen(articleId: string): void;
 }) {
@@ -38,7 +52,7 @@ export function RecentlyReadStrip({
     return () => {
       cancelled = true;
     };
-  }, [articleIds]);
+  }, [articleIds, refreshedAt]);
 
   if (articleIds.length === 0) return null;
 

@@ -33,7 +33,7 @@ import { SessionPhase } from '../lib/pageSession';
 import { RootStackParamList } from '../navigation/routes';
 import { useAppState } from '../state/AppStateProvider';
 import { paletteFor } from '../theme';
-import { RecentlyReadStrip } from './RecentlyReadStrip';
+import { RecentlyReadStrip, forgetRecentlyReadTitles } from './RecentlyReadStrip';
 
 export function FrontScreen({ navigation }: NativeStackScreenProps<RootStackParamList, 'Front'>) {
   const { state } = useAppState();
@@ -48,6 +48,9 @@ export function FrontScreen({ navigation }: NativeStackScreenProps<RootStackPara
   const [height, setHeight] = useState<number | null>(null);
   const [phase, setPhase] = useState<SessionPhase>('waiting-for-consent');
   const [pullRefreshing, setPullRefreshing] = useState(false);
+
+  // Changing this tells the strip its cached titles are gone and it should ask again.
+  const [titlesRefreshedAt, setTitlesRefreshedAt] = useState(0);
 
   const windowHeight = useWindowDimensions().height;
   const headerHeight = useHeaderHeight();
@@ -71,6 +74,12 @@ export function FrontScreen({ navigation }: NativeStackScreenProps<RootStackPara
 
   const onRefresh = useCallback(() => {
     setPullRefreshing(true);
+
+    // The strip's ids come from app state and are already current; its titles are cached, so a
+    // refresh is the moment to ask for them again.
+    forgetRecentlyReadTitles();
+    setTitlesRefreshedAt(Date.now());
+
     page.current?.reload();
   }, []);
 
@@ -116,7 +125,12 @@ export function FrontScreen({ navigation }: NativeStackScreenProps<RootStackPara
         <RefreshControl refreshing={pullRefreshing} onRefresh={onRefresh} tintColor={palette.text} />
       }
     >
-      <RecentlyReadStrip articleIds={recentlyRead(state, 5)} palette={palette} onOpen={openById} />
+      <RecentlyReadStrip
+        articleIds={recentlyRead(state, 5)}
+        refreshedAt={titlesRefreshedAt}
+        palette={palette}
+        onOpen={openById}
+      />
 
       <PageWebView
         ref={page}
