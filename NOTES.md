@@ -56,8 +56,57 @@ known choice is the reading that does not silently switch the ads off on every l
 
 ## How the two page layouts share code, and where they differ
 
-_To fill in: the shared web-view host and message plumbing; front page sized by its height messages
-inside a native scroll view, article page scrolling itself under a floating header._
+Both screens render the same component, `src/components/PageWebView.tsx`. It owns everything the two
+pages have in common: the session (loading, ready, error), the consent-aware URL, the message channel,
+the navigation rules, the injected scripts and the handover to the tracker. It decides none of that
+itself — each rule comes from a pure module in `src/lib`, so the component is wiring rather than logic.
+
+They differ only in layout and in what the page is told:
+
+- **Front:** a native `ScrollView` holds the Recently read strip, the web view and a footer. The web
+  view has `scrollEnabled={false}` and is given exactly the height the page reports, so the native
+  scroll view does all the scrolling and the footer really sits below the end of the page. It gets
+  `app:read`; it gets no insets.
+- **Article:** the web view fills the screen and scrolls itself under a transparent native header. It
+  gets `app:insets` (header height and the bottom safe area) and never `app:read`, which it has no
+  listener for. `src/lib/stateSync.ts` enforces that split, so neither page is sent an event it ignores.
+
+**The loading overlay follows the session, never the web view's load events.** `onLoadStart` fires for
+navigation *inside* a page too — a contents link, the Jump button — and the brief is explicit that
+navigation inside a page is not a load. Driving the spinner from `onLoadStart` would flash it on every
+in-page jump. The overlay is shown only while the session's phase is `loading`, which only a real load
+can cause.
+
+**The web view is keyed by `loadId`.** A reload has to produce a genuinely new document, because the
+consent string lives in the URL fragment and a page reads it once at startup — changing only the
+fragment of a live document would not reload anything. Keying by the load id forces React to mount a
+new web view. For the same reason the URL is built once, when a load starts, from the consent known at
+that moment: changing consent must never mutate the source of a document already on screen.
+
+**A screen view is sent on the first `ready` of each load id.** The brief asks for one per loaded
+document, and a reload is a new one. Article 5 announces itself twice; the second `ready` is counted
+but sends neither a screen view nor the app state again.
+
+**Titles in the Recently read strip come from `/bundle/<id>/manifest.json`.** The app stores only ids,
+and that manifest is the only endpoint that gives a title for a single article. It exists for part 3,
+so this uses just its `title` field and falls back to `Article <id>` on any failure; titles are cached
+per id. What we would rather have is noted under *what we would ask the web team for*.
+
+Two layout rules were wrong at first and only showed up in manual testing. Both now live in
+`src/lib/pageLayout.ts`, where they are tested rather than inlined in the screen.
+
+**Two loading indicators at once.** The front page's pull-to-refresh control was bound to
+`phase === 'loading'`, so an ordinary load — a launch, a reload, a retry — drove both it and the web
+view's overlay. The screen now tracks only a refresh the *reader* started, and `overlayFor` suppresses
+the overlay while that pull spinner is up, so exactly one indicator shows either way. The error view is
+never suppressed: that flag governs the spinner alone.
+
+**The error view buried down a stale scroll view.** The front page's web view is sized by the height
+the page reports, and that height was kept after the document it described had gone. A pull-to-refresh
+against an unreachable server therefore left the scroll area as tall as the page that had just been
+replaced, with the error centred thousands of pixels down it. The height is now dropped when a new load
+starts, and `pageAreaHeight` returns a reported height only while a page is actually being shown;
+otherwise the page area is the visible screen, so loading and error views land in view.
 
 ## How the app finds the end of the article text
 
@@ -114,6 +163,8 @@ AI wrote most of the logic layer and its tests from the brief. Four things had t
   returned `true`, but a function body does not return its last expression; the trailing `true;` is a
   *completion value* convention that matters when a web view evaluates the source. The test now asserts
   the script ends with `true;` and separately evaluates it.
+- **`StyleSheet.absoluteFillObject` does not exist in React Native 0.86's types.** The overlay style now
+  sets `position` and the four edges explicitly.
 
 ## Known bugs and observations (reported, not fixed)
 
