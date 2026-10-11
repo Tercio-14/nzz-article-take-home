@@ -15,7 +15,15 @@
 import { useHeaderHeight } from '@react-navigation/elements';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
-import { RefreshControl, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import {
+  LayoutChangeEvent,
+  RefreshControl,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+  useWindowDimensions,
+} from 'react-native';
 
 import { PageWebView, PageWebViewHandle } from '../components/PageWebView';
 import { recentlyRead } from '../lib/appState';
@@ -32,6 +40,11 @@ export function FrontScreen({ navigation }: NativeStackScreenProps<RootStackPara
   const palette = paletteFor(state.theme);
 
   const page = useRef<PageWebViewHandle>(null);
+  const scroller = useRef<ScrollView>(null);
+
+  // Where the page sits inside the scroll view, so a heading's offset in the document can be turned
+  // into a position to scroll this view to.
+  const pageTop = useRef(0);
   const [height, setHeight] = useState<number | null>(null);
   const [phase, setPhase] = useState<SessionPhase>('waiting-for-consent');
   const [pullRefreshing, setPullRefreshing] = useState(false);
@@ -61,6 +74,16 @@ export function FrontScreen({ navigation }: NativeStackScreenProps<RootStackPara
     page.current?.reload();
   }, []);
 
+  // A "Jump to" link was tapped and the heading measured. The front header is opaque and sits outside
+  // this scroll view, so the top of the visible area is simply the scroll position.
+  const onAnchorMeasured = useCallback((_fragment: string, top: number) => {
+    scroller.current?.scrollTo({ y: Math.max(0, pageTop.current + top), animated: true });
+  }, []);
+
+  const onPageLayout = useCallback((event: LayoutChangeEvent) => {
+    pageTop.current = event.nativeEvent.layout.y;
+  }, []);
+
   const openArticle = useCallback(
     (path: string) => {
       const articleId = articleIdFromPath(path);
@@ -86,6 +109,7 @@ export function FrontScreen({ navigation }: NativeStackScreenProps<RootStackPara
 
   return (
     <ScrollView
+      ref={scroller}
       style={{ backgroundColor: palette.background }}
       contentContainerStyle={styles.content}
       refreshControl={
@@ -101,12 +125,12 @@ export function FrontScreen({ navigation }: NativeStackScreenProps<RootStackPara
         palette={palette}
         style={{ height: pageHeight }}
         showLoadingOverlay={!pullRefreshing}
+        onLayout={onPageLayout}
+        onAnchorMeasured={onAnchorMeasured}
         onHeight={setHeight}
         onPhaseChange={onPhaseChange}
         onOpenArticle={openArticle}
       />
-
-      {/* TODO (task 5): the "Jump to" links scroll this scroll view so the heading sits at the top. */}
 
       <View style={[styles.footer, { borderTopColor: palette.rule }]}>
         <Text style={[styles.footerText, { color: palette.muted }]}>
