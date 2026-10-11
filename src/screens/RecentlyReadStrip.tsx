@@ -44,51 +44,70 @@ export function RecentlyReadStrip({
 
   return (
     <View style={[styles.container, { borderBottomColor: palette.rule }]}>
-      <Text style={[styles.heading, { color: palette.muted }]}>RECENTLY READ</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.row}>
-        {articleIds.map(id => (
-          <TouchableOpacity
-            key={id}
-            accessibilityRole="button"
-            onPress={() => onOpen(id)}
-            style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.rule }]}
-          >
-            <Text numberOfLines={3} style={[styles.title, { color: palette.text }]}>
-              {resolved[id] ?? fallbackTitle(id)}
-            </Text>
-          </TouchableOpacity>
-        ))}
+      <Text style={[styles.heading, { color: palette.accent }]}>RECENTLY READ</Text>
+
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.row}
+        // So a half-shown card at the edge still reads as "there is more this way".
+        decelerationRate="fast"
+      >
+        {articleIds.map(id => {
+          const title = resolved[id] ?? fallbackTitle(id);
+
+          return (
+            <TouchableOpacity
+              key={id}
+              accessibilityRole="button"
+              accessibilityLabel={`Open ${title}`}
+              onPress={() => onOpen(id)}
+              style={[styles.card, { backgroundColor: palette.surface, borderColor: palette.rule }]}
+            >
+              <Text numberOfLines={3} style={[styles.title, { color: palette.text }]}>
+                {title}
+              </Text>
+            </TouchableOpacity>
+          );
+        })}
       </ScrollView>
     </View>
   );
 }
 
+// 16px gutters and an uppercase accent heading echo the page's own kickers and margins, so the strip
+// reads as part of the same product rather than a control bolted above it.
 const styles = StyleSheet.create({
   container: {
     borderBottomWidth: StyleSheet.hairlineWidth,
-    paddingBottom: 12,
-    paddingTop: 8,
+    paddingBottom: 16,
+    paddingTop: 14,
   },
   heading: {
-    fontSize: 11,
-    fontWeight: '500',
-    letterSpacing: 0.6,
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.8,
+    paddingBottom: 10,
     paddingHorizontal: 16,
-    paddingBottom: 8,
+    textTransform: 'uppercase',
   },
   row: {
-    gap: 8,
+    gap: 10,
     paddingHorizontal: 16,
   },
   card: {
-    borderRadius: 8,
+    borderRadius: 12,
     borderWidth: StyleSheet.hairlineWidth,
+    // Comfortably past the 44pt minimum touch target, and tall enough for three lines of title.
+    minHeight: 92,
     justifyContent: 'center',
-    padding: 10,
-    width: 150,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    width: 172,
   },
   title: {
-    fontSize: 13,
-    lineHeight: 17,
+    fontSize: 14,
+    fontWeight: '500',
+    lineHeight: 19,
   },
 });
