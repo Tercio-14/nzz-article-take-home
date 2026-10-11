@@ -13,13 +13,15 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PageWebView, PageWebViewHandle } from '../components/PageWebView';
 import { isBookmarked } from '../lib/appState';
 import { articleIdFromPath } from '../lib/links';
+import { createReadReporter } from '../lib/readOnce';
 import { RootStackParamList } from '../navigation/routes';
 import { useAppState } from '../state/AppStateProvider';
 import { paletteFor } from '../theme';
+import { tracking } from '../tracking';
 
 export function ArticleScreen({ navigation, route }: NativeStackScreenProps<RootStackParamList, 'Article'>) {
   const { path, articleId } = route.params;
-  const { state, fontScaleUp, fontScaleDown, setTheme, toggleBookmark } = useAppState();
+  const { state, fontScaleUp, fontScaleDown, setTheme, toggleBookmark, markRead } = useAppState();
 
   const palette = paletteFor(state.theme);
   const headerHeight = useHeaderHeight();
@@ -28,10 +30,32 @@ export function ArticleScreen({ navigation, route }: NativeStackScreenProps<Root
 
   const bookmarked = isBookmarked(state, articleId);
 
+
   // What the app's own chrome covers, in CSS pixels, top and bottom.
   const insets = useMemo(
     () => ({ top: Math.round(headerHeight), bottom: Math.round(safeArea.bottom) }),
     [headerHeight, safeArea.bottom],
+  );
+
+  // One reporter per article screen. The README asks for one read event each time a screen is opened
+  // and never twice for the same screen, so a reload reports nothing further, while opening the
+  // article again later is a new screen and counts again.
+  const markReadRef = useRef(markRead);
+  markReadRef.current = markRead;
+
+  const reporter = useRef(
+    createReadReporter(id => {
+      tracking.trackArticleRead(id);
+      markReadRef.current(id);
+    }),
+  ).current;
+
+  const onEndOfText = useCallback(
+    (reportedId: string) => {
+      // Only the article this screen is showing; a stale document cannot mark something else read.
+      if (reportedId === articleId) reporter.report(reportedId);
+    },
+    [articleId, reporter],
   );
 
   const openArticle = useCallback(
@@ -73,8 +97,12 @@ export function ArticleScreen({ navigation, route }: NativeStackScreenProps<Root
 
   return (
     <View style={[styles.screen, { backgroundColor: palette.background }]}>
-      {/* TODO (task 5): pull to refresh at the top of the article, the end-of-text probe that marks it
-          read, and the contents links and Jump button scrolling to just below this header. */}
+      {/* The contents links and the Jump button need no code here: the page sets
+          `scroll-margin-top: var(--inset-top)` on every element with an id, and the app supplies that
+          inset, so its own anchor scrolling already lands headings below this header. */}
+      {/* Not built: pull-to-refresh. The article web view scrolls itself, so a RefreshControl has
+          nothing to pull — and making the wrapper scrollable would fight the page's own scrolling.
+          See NOTES.md; the header's Retry on the error view and reopening the article still reload. */}
       <PageWebView
         ref={page}
         page="article"
@@ -82,6 +110,7 @@ export function ArticleScreen({ navigation, route }: NativeStackScreenProps<Root
         articleId={articleId}
         insets={insets}
         palette={palette}
+        onEndOfText={onEndOfText}
         onOpenArticle={openArticle}
       />
     </View>

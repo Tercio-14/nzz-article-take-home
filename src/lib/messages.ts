@@ -6,11 +6,18 @@
 // So this parser assumes nothing: it never throws, and anything it does not positively recognise comes
 // back as 'ignored'.
 
+import { END_OF_TEXT_MESSAGE } from './endOfText';
+import { ANCHOR_OFFSET_MESSAGE } from './pageScripts';
+
 export type WebViewMessage =
   | { kind: 'ready'; page: 'front' | 'article'; articleId?: string }
   | { kind: 'height'; value: number }
   | { kind: 'toggleBookmark'; articleId: string }
   | { kind: 'openArticle'; path: string }
+  /** The app's own probe reporting that the end of the article text has been on screen. */
+  | { kind: 'endOfText'; articleId: string }
+  /** The app's own measurement of where a heading sits, for the front page's jump links. */
+  | { kind: 'anchorOffset'; fragment: string; top: number }
   | { kind: 'tracker'; raw: string }
   | { kind: 'ignored' };
 
@@ -43,6 +50,13 @@ export function parseWebViewMessage(raw: unknown): WebViewMessage {
       return isNonEmptyString(parsed.articleId) ? { kind: 'toggleBookmark', articleId: parsed.articleId } : IGNORED;
     case 'openArticle':
       return isServerPath(parsed.path) ? { kind: 'openArticle', path: parsed.path } : IGNORED;
+    // Not part of the protocol: this one is posted by the app's own injected probe.
+    case END_OF_TEXT_MESSAGE:
+      return isNonEmptyString(parsed.articleId) ? { kind: 'endOfText', articleId: parsed.articleId } : IGNORED;
+    case ANCHOR_OFFSET_MESSAGE:
+      return isNonEmptyString(parsed.fragment) && isFiniteHeight(parsed.top)
+        ? { kind: 'anchorOffset', fragment: parsed.fragment, top: parsed.top }
+        : IGNORED;
     default:
       return IGNORED;
   }

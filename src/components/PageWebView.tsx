@@ -12,7 +12,15 @@
 //   fragment would not reload the page, and the consent string lives in the fragment.
 
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, Linking, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import {
+  ActivityIndicator,
+  LayoutChangeEvent,
+  Linking,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { WebView, WebViewMessageEvent } from 'react-native-webview';
 import type { ShouldStartLoadRequest } from 'react-native-webview/lib/WebViewTypes';
 
@@ -20,10 +28,17 @@ import { APP_CONTEXT, BASE_URL } from '../config';
 import { useConnectivityRestored } from '../connectivity/useConnectivityRestored';
 import { useConsent } from '../consent/ConsentProvider';
 import { buildPageUrl, decideOnConsentChange } from '../lib/consent';
-import { classifyNavigation, createOpenArticleDeduper } from '../lib/links';
+import { anchorTargetFor, classifyNavigation, createOpenArticleDeduper } from '../lib/links';
 import { parseWebViewMessage } from '../lib/messages';
+import { endOfTextProbeScript } from '../lib/endOfText';
 import { overlayFor } from '../lib/pageLayout';
-import { Insets, PageKind, appEventsScript, beforeContentLoadedScript } from '../lib/pageScripts';
+import {
+  Insets,
+  PageKind,
+  appEventsScript,
+  beforeContentLoadedScript,
+  measureAnchorScript,
+} from '../lib/pageScripts';
 import { SessionPhase } from '../lib/pageSession';
 import { parseUrl } from '../lib/parseUrl';
 import { SentState, planStateUpdates } from '../lib/stateSync';
@@ -46,7 +61,13 @@ export type PageWebViewProps = {
   insets?: Insets;
   onHeight?(height: number): void;
   onOpenArticle(path: string): void;
+  /** Article only: the app's probe saw the end of the text. Fires at most once per document. */
+  onEndOfText?(articleId: string): void;
+  /** A jump link was tapped and the heading has been measured; the caller does the scrolling. */
+  onAnchorMeasured?(fragment: string, top: number): void;
   onPhaseChange?(phase: SessionPhase): void;
+  /** Where this host sits in its parent, so a jump link's offset can be turned into a scroll. */
+  onLayout?(event: LayoutChangeEvent): void;
   /**
    * Whether this host draws the loading spinner. Pass false when the screen is already showing one of
    * its own, such as the front page's pull-to-refresh control. The error view is shown either way.
@@ -73,7 +94,10 @@ export const PageWebView = forwardRef<PageWebViewHandle, PageWebViewProps>(funct
     insets,
     onHeight,
     onOpenArticle,
+    onEndOfText,
+    onAnchorMeasured,
     onPhaseChange,
+    onLayout,
     showLoadingOverlay = true,
     palette,
     style,
@@ -98,6 +122,8 @@ export const PageWebView = forwardRef<PageWebViewHandle, PageWebViewProps>(funct
   pageStateRef.current = pageState;
   const insetsRef = useRef(insets);
   insetsRef.current = insets;
+  const articleIdRef = useRef(articleId);
+  articleIdRef.current = articleId;
 
   const deduper = useMemo(() => createOpenArticleDeduper(), []);
 
@@ -111,6 +137,12 @@ export const PageWebView = forwardRef<PageWebViewHandle, PageWebViewProps>(funct
 
     lastSent.current = plan.nextSent;
     inject(appEventsScript(plan.events));
+
+    // The read probe goes in with the state: the page is ready, so its text is laid out. It guards
+    // against a second install itself, so a duplicate ready cannot start a second poller.
+    if (page === 'article' && articleIdRef.current) {
+      inject(endOfTextProbeScript(articleIdRef.current, insetsRef.current ?? { top: 0, bottom: 0 }));
+    }
   }, [inject, page]);
 
   const session = usePageSession(gateOpen, sendInitialState);
@@ -199,11 +231,28 @@ export const PageWebView = forwardRef<PageWebViewHandle, PageWebViewProps>(funct
         case 'openArticle':
           if (deduper.shouldOpen(message.path)) onOpenArticle(message.path);
           break;
+        case 'endOfText':
+          onEndOfText?.(message.articleId);
+          break;
+        case 'anchorOffset':
+          onAnchorMeasured?.(message.fragment, message.top);
+          break;
         default:
           break;
       }
     },
-    [loadId, page, articleId, dispatch, onHeight, toggleBookmark, deduper, onOpenArticle],
+    [
+      loadId,
+      page,
+      articleId,
+      dispatch,
+      onHeight,
+      toggleBookmark,
+      deduper,
+      onOpenArticle,
+      onEndOfText,
+      onAnchorMeasured,
+    ],
   );
 
   const onShouldStartLoadWithRequest = useCallback(
@@ -215,7 +264,21 @@ export const PageWebView = forwardRef<PageWebViewHandle, PageWebViewProps>(funct
         isTopFrame: request.isTopFrame,
       });
 
-      if (decision.action === 'allow') return true;
+      if (decision.action === 'allow') {
+        // A jump link. The page keeps handling the navigation; the app only needs to know where the
+        // heading is, because on the front page the native scroll view is what actually scrolls.
+        if (onAnchorMeasured) {
+          const fragment = anchorTargetFor({
+            url: request.url,
+            baseOrigin: BASE_ORIGIN,
+            currentUrl: load?.uri ?? '',
+          });
+
+          if (fragment) inject(measureAnchorScript(fragment));
+        }
+
+        return true;
+      }
 
       if (decision.action === 'openArticle') {
         if (deduper.shouldOpen(decision.path)) onOpenArticle(decision.path);
@@ -227,7 +290,7 @@ export const PageWebView = forwardRef<PageWebViewHandle, PageWebViewProps>(funct
 
       return false;
     },
-    [load?.uri, deduper, onOpenArticle],
+    [load?.uri, deduper, onOpenArticle, onAnchorMeasured, inject],
   );
 
   const beforeContentLoaded = useMemo(
@@ -238,7 +301,7 @@ export const PageWebView = forwardRef<PageWebViewHandle, PageWebViewProps>(funct
   );
 
   return (
-    <View style={[styles.container, style]}>
+    <View style={[styles.container, style]} onLayout={onLayout}>
       {load && (
         <WebView
           key={String(load.id)}

@@ -97,6 +97,32 @@ export function appEventsScript(events: { name: AppEventName; detail: unknown }[
   return `${dispatches.join('\n')}\ntrue;`;
 }
 
+/** The message the measurement below posts back. */
+export const ANCHOR_OFFSET_MESSAGE = 'nzzapp:anchorOffset';
+
+/**
+ * Measures where a heading sits in the document, so the app can scroll to it.
+ *
+ * The front page's "Jump to" links are ordinary anchors, but that page does not scroll — the native
+ * scroll view does. The app cannot know where a heading is without asking, so it asks once per tap
+ * and scrolls itself. Nothing is reported when the id does not exist, and the app simply does not
+ * scroll, which is better than jumping somewhere wrong.
+ */
+export function measureAnchorScript(fragment: string): string {
+  return `(function () {
+  var fragment = ${embed(fragment)};
+  var target = document.getElementById(fragment);
+  if (!target || !window.ReactNativeWebView) return;
+
+  var top = target.getBoundingClientRect().top + (window.pageYOffset || document.documentElement.scrollTop || 0);
+
+  window.ReactNativeWebView.postMessage(
+    JSON.stringify({ type: ${embed(ANCHOR_OFFSET_MESSAGE)}, fragment: fragment, top: Math.round(top) }),
+  );
+})();
+true;`;
+}
+
 /**
  * Embeds a value as a JavaScript literal.
  *
@@ -104,7 +130,7 @@ export function appEventsScript(events: { name: AppEventName; detail: unknown }[
  * `</script>` cannot end the script, and the two line separators JSON leaves bare are escaped because
  * JavaScript does not accept them inside a string.
  */
-function embed(value: unknown): string {
+export function embed(value: unknown): string {
   return JSON.stringify(value ?? null)
     .replace(/</g, '\\u003c')
     .replace(/\u2028/g, '\\u2028')

@@ -83,6 +83,35 @@ export function articleIdFromPath(path: string): string | null {
   return article ? article[1] : null;
 }
 
+/**
+ * The fragment of a navigation that stays inside the current document, or null when it is not one.
+ *
+ * The front page's "Jump to" links are ordinary anchors. The page cannot act on them — it does not
+ * scroll, the native scroll view does — so the app has to notice them and scroll instead. The same
+ * navigation is still `allow`ed by `classifyNavigation`; this only says what it was pointing at.
+ */
+export function anchorTargetFor(request: Omit<NavigationRequest, 'isTopFrame'>): string | null {
+  const target = parseUrl(request.url);
+  const current = parseUrl(request.currentUrl);
+  if (!target || !current) return null;
+
+  const sameOrigin = target.scheme === '' || target.origin === request.baseOrigin;
+  if (!sameOrigin) return null;
+
+  // A different path or query is a new document, not a jump inside this one.
+  if (target.path !== current.path || target.query !== current.query) return null;
+
+  if (target.hash === '') return null;
+
+  // The app puts the consent string in the fragment itself, so a load carrying it is not a reader
+  // jumping to a heading and must not be measured or scrolled to.
+  if (CONSENT_FRAGMENT.test(target.hash)) return null;
+
+  return target.hash;
+}
+
+const CONSENT_FRAGMENT = /^consent=/;
+
 export type OpenArticleDeduper = {
   /** True when this path should open a screen; false while an identical path is still being handled. */
   shouldOpen(path: string): boolean;

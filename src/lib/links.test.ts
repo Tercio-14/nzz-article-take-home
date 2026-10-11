@@ -1,4 +1,4 @@
-import { articleIdFromPath, classifyNavigation, createOpenArticleDeduper } from './links';
+import { anchorTargetFor, articleIdFromPath, classifyNavigation, createOpenArticleDeduper } from './links';
 
 const BASE = 'http://localhost:8787';
 const ARTICLE_URL = `${BASE}/article/1`;
@@ -206,5 +206,64 @@ describe('articleIdFromPath', () => {
 
   it('returns null for an empty path', () => {
     expect(articleIdFromPath('')).toBeNull();
+  });
+});
+
+describe('anchorTargetFor', () => {
+  const FRONT = `${BASE}/front`;
+  const anchor = (url: string, currentUrl = FRONT) => anchorTargetFor({ url, baseOrigin: BASE, currentUrl });
+
+  it('reads the heading a front page Jump to link points at', () => {
+    expect(anchor(`${FRONT}#top-stories`)).toBe('top-stories');
+    expect(anchor(`${FRONT}#more-stories`)).toBe('more-stories');
+    expect(anchor(`${FRONT}#test-pages`)).toBe('test-pages');
+  });
+
+  it('reads an anchor given as a relative link', () => {
+    expect(anchor('/front#more-stories')).toBe('more-stories');
+  });
+
+  it('reads an anchor on a page that has a query string', () => {
+    const url = `${BASE}/article/1?ref=front`;
+
+    expect(anchorTargetFor({ url: `${url}#related`, baseOrigin: BASE, currentUrl: url })).toBe('related');
+  });
+
+  it('is nothing for the plain page, which is not a jump', () => {
+    expect(anchor(FRONT)).toBeNull();
+  });
+
+  it('is nothing for a bare hash', () => {
+    expect(anchor(`${FRONT}#`)).toBeNull();
+  });
+
+  it('is nothing when the path differs, because that is a new document', () => {
+    expect(anchor(`${BASE}/article/2#related`)).toBeNull();
+  });
+
+  it('is nothing when only the query differs, because that is also a new document', () => {
+    expect(anchorTargetFor({ url: `${FRONT}?ref=x#top`, baseOrigin: BASE, currentUrl: FRONT })).toBeNull();
+  });
+
+  it('is nothing for another origin', () => {
+    expect(anchor('https://example.org/front#top-stories')).toBeNull();
+  });
+
+  it('is nothing for a mailto link', () => {
+    expect(anchor('mailto:newsdesk@example.org')).toBeNull();
+  });
+
+  it('is nothing for the consent fragment the app puts there itself', () => {
+    expect(anchor(`${FRONT}#consent=cs1-95f4`)).toBeNull();
+  });
+
+  it('is nothing when there is no current document yet', () => {
+    expect(anchorTargetFor({ url: `${FRONT}#top`, baseOrigin: BASE, currentUrl: '' })).toBeNull();
+  });
+
+  it('still lets classifyNavigation allow the same navigation, so the page is not blocked', () => {
+    expect(classifyNavigation({ url: `${FRONT}#top-stories`, baseOrigin: BASE, currentUrl: FRONT })).toEqual({
+      action: 'allow',
+    });
   });
 });

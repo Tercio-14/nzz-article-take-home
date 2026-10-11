@@ -1,7 +1,9 @@
 import type { AppContext } from '../config';
 import {
+  ANCHOR_OFFSET_MESSAGE,
   APP_EVENTS,
   appEventsScript,
+  measureAnchorScript,
   AppEventName,
   Insets,
   PageState,
@@ -233,5 +235,62 @@ describe('appEventsScript', () => {
     );
 
     expect(dispatched[0].detail).toEqual({ ids: ['</script>', 'a"b'] });
+  });
+});
+
+describe('measureAnchorScript', () => {
+  /** Runs the measurement against a fake page holding one heading at a known place. */
+  function measure(options: { fragment: string; id?: string; top?: number; scrollY?: number }) {
+    const posted: string[] = [];
+    const element = { getBoundingClientRect: () => ({ top: options.top ?? 400 }) };
+
+    const win = {
+      pageYOffset: options.scrollY ?? 0,
+      ReactNativeWebView: { postMessage: (data: string) => posted.push(data) },
+    };
+    const document = {
+      documentElement: { scrollTop: 0 },
+      getElementById: (id: string) => (id === (options.id ?? 'top-stories') ? element : null),
+    };
+
+    new Function('window', 'document', measureAnchorScript(options.fragment))(win, document);
+
+    return posted;
+  }
+
+  it('reports where the heading sits in the document', () => {
+    const posted = measure({ fragment: 'top-stories', top: 400 });
+
+    expect(JSON.parse(posted[0])).toEqual({
+      type: ANCHOR_OFFSET_MESSAGE,
+      fragment: 'top-stories',
+      top: 400,
+    });
+  });
+
+  it('adds how far the page is already scrolled, so the offset is from the top of the document', () => {
+    const posted = measure({ fragment: 'top-stories', top: 100, scrollY: 300 });
+
+    expect(JSON.parse(posted[0]).top).toBe(400);
+  });
+
+  it('rounds to whole pixels', () => {
+    const posted = measure({ fragment: 'top-stories', top: 400.6 });
+
+    expect(JSON.parse(posted[0]).top).toBe(401);
+  });
+
+  it('says nothing when the heading does not exist, so the app does not scroll somewhere wrong', () => {
+    expect(measure({ fragment: 'summary', id: 'top-stories' })).toEqual([]);
+  });
+
+  it('ends with true, so the web view does not warn about what it evaluated to', () => {
+    expect(measureAnchorScript('top-stories').trimEnd().endsWith('true;')).toBe(true);
+  });
+
+  it('escapes the fragment, so a hostile one cannot break out of the script', () => {
+    const posted = measure({ fragment: '";window.pwned=1;"', id: '";window.pwned=1;"' });
+
+    expect(JSON.parse(posted[0]).fragment).toBe('";window.pwned=1;"');
   });
 });

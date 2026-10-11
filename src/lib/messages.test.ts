@@ -1,3 +1,4 @@
+import { END_OF_TEXT_MESSAGE } from './endOfText';
 import { parseWebViewMessage } from './messages';
 
 const json = (value: unknown): string => JSON.stringify(value);
@@ -117,6 +118,23 @@ describe('parseWebViewMessage', () => {
 
     it('ignores a non-string command', () => {
       expect(parseWebViewMessage(json({ command: 7 }))).toEqual({ kind: 'ignored' });
+    });
+  });
+
+  describe("the app's own end-of-text probe", () => {
+    it('reads the report the injected probe posts', () => {
+      const raw = json({ type: END_OF_TEXT_MESSAGE, articleId: '3' });
+
+      expect(parseWebViewMessage(raw)).toEqual({ kind: 'endOfText', articleId: '3' });
+    });
+
+    it('ignores a report with no article id, which could not be attributed', () => {
+      expect(parseWebViewMessage(json({ type: END_OF_TEXT_MESSAGE }))).toEqual({ kind: 'ignored' });
+      expect(parseWebViewMessage(json({ type: END_OF_TEXT_MESSAGE, articleId: '' }))).toEqual({ kind: 'ignored' });
+    });
+
+    it('uses a type of its own, which the pages never send', () => {
+      expect(END_OF_TEXT_MESSAGE).toBe('nzzapp:endOfText');
     });
   });
 
