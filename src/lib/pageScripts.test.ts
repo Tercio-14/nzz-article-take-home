@@ -1,6 +1,7 @@
 import type { AppContext } from '../config';
 import {
   APP_EVENTS,
+  appEventsScript,
   AppEventName,
   Insets,
   PageState,
@@ -196,5 +197,41 @@ describe('values that would break a naive script', () => {
 
     expect(window.appContext).toEqual(hostile);
     expect((window as unknown as Record<string, unknown>).pwned).toBeUndefined();
+  });
+});
+
+describe('appEventsScript', () => {
+  it('dispatches each planned event in order, as one script', () => {
+    const { dispatched } = evaluate(
+      appEventsScript([
+        { name: 'app:theme', detail: { value: 'light' } },
+        { name: 'app:bookmarks', detail: { ids: ['1'] } },
+      ]),
+    );
+
+    expect(dispatched).toEqual([
+      { name: 'app:theme', detail: { value: 'light' } },
+      { name: 'app:bookmarks', detail: { ids: ['1'] } },
+    ]);
+  });
+
+  it('dispatches a single change on its own', () => {
+    const { dispatched } = evaluate(appEventsScript([{ name: 'app:fontScale', detail: { value: 1.1 } }]));
+
+    expect(dispatched).toEqual([{ name: 'app:fontScale', detail: { value: 1.1 } }]);
+  });
+
+  it('is a harmless script when nothing changed, so the caller need not special-case it', () => {
+    const { dispatched } = evaluate(appEventsScript([]));
+
+    expect(dispatched).toEqual([]);
+  });
+
+  it('escapes hostile values here too', () => {
+    const { dispatched } = evaluate(
+      appEventsScript([{ name: 'app:bookmarks', detail: { ids: ['</script>', 'a"b'] } }]),
+    );
+
+    expect(dispatched[0].detail).toEqual({ ids: ['</script>', 'a"b'] });
   });
 });

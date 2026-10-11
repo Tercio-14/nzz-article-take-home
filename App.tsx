@@ -1,27 +1,22 @@
 import { StatusBar } from 'expo-status-bar';
-import { SafeAreaView, StyleSheet } from 'react-native';
-import { WebView } from 'react-native-webview';
+import { SafeAreaProvider } from 'react-native-safe-area-context';
 
-import { FRONT_URL } from './src/config';
+import { ConsentProvider } from './src/consent/ConsentProvider';
+import { RootNavigator } from './src/navigation/RootNavigator';
+import { AppStateProvider } from './src/state/AppStateProvider';
 
-// Task 1 is the scaffold: one web view on the front page, to prove the app reaches the fixture
-// server. The native layout, the message protocol, consent and tracking come in the next tasks.
+// The app state comes first: it is read from storage before anything renders, so a page is never told
+// the defaults and then the real values. Consent wraps the navigator because no page may start loading
+// until the gate is open.
 export default function App() {
   return (
-    <SafeAreaView style={styles.screen}>
-      <StatusBar style="auto" />
-      <WebView source={{ uri: FRONT_URL }} style={styles.webView} />
-    </SafeAreaView>
+    <SafeAreaProvider>
+      <AppStateProvider>
+        <ConsentProvider>
+          <StatusBar style="auto" />
+          <RootNavigator />
+        </ConsentProvider>
+      </AppStateProvider>
+    </SafeAreaProvider>
   );
 }
-
-const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: '#000000',
-  },
-  webView: {
-    flex: 1,
-    backgroundColor: 'transparent',
-  },
-});

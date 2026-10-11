@@ -68,6 +68,21 @@ export function classifyNavigation(request: NavigationRequest): NavigationDecisi
   return EXTERNAL;
 }
 
+/**
+ * The article id in a path such as `/article/3?ref=teaser`, or null when it is not an article path.
+ *
+ * An `openArticle` *message* carries only a path, while `classifyNavigation` hands back the id for a
+ * navigation; this gives both routes the same answer from the same rule.
+ */
+export function articleIdFromPath(path: string): string | null {
+  const parsed = parseUrl(path);
+  if (!parsed) return null;
+
+  const article = ARTICLE_PATH.exec(parsed.path);
+
+  return article ? article[1] : null;
+}
+
 export type OpenArticleDeduper = {
   /** True when this path should open a screen; false while an identical path is still being handled. */
   shouldOpen(path: string): boolean;

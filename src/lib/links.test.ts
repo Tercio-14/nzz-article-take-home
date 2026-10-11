@@ -1,4 +1,4 @@
-import { classifyNavigation, createOpenArticleDeduper } from './links';
+import { articleIdFromPath, classifyNavigation, createOpenArticleDeduper } from './links';
 
 const BASE = 'http://localhost:8787';
 const ARTICLE_URL = `${BASE}/article/1`;
@@ -176,5 +176,35 @@ describe('createOpenArticleDeduper', () => {
     clock = 10;
 
     expect(deduper.shouldOpen('/article/3?ref=more')).toBe(true);
+  });
+});
+
+describe('articleIdFromPath', () => {
+  it('reads the id from a plain article path', () => {
+    expect(articleIdFromPath('/article/3')).toBe('3');
+  });
+
+  it('reads the id when a query string travels with it', () => {
+    expect(articleIdFromPath('/article/3?ref=teaser')).toBe('3');
+  });
+
+  it('ignores a fragment', () => {
+    expect(articleIdFromPath('/article/2#related')).toBe('2');
+  });
+
+  it('accepts an id that is not a number', () => {
+    expect(articleIdFromPath('/article/a-slug-id')).toBe('a-slug-id');
+  });
+
+  it('returns null for the front page', () => {
+    expect(articleIdFromPath('/front')).toBeNull();
+  });
+
+  it('returns null for a nested path, because the id must not contain a slash', () => {
+    expect(articleIdFromPath('/article/2/comments')).toBeNull();
+  });
+
+  it('returns null for an empty path', () => {
+    expect(articleIdFromPath('')).toBeNull();
   });
 });

@@ -82,6 +82,22 @@ export function initialStateScript(page: PageKind, state: PageState, insets?: In
 }
 
 /**
+ * Several `app:*` events as one script, for the difference `planStateUpdates` works out.
+ *
+ * `initialStateScript` builds the whole set and cannot express a change of one value, which is what a
+ * page needs after it is ready: each later change has to reach it exactly once.
+ */
+export function appEventsScript(events: { name: AppEventName; detail: unknown }[]): string {
+  if (events.length === 0) return 'true;';
+
+  const dispatches = events.map(
+    event => `window.dispatchEvent(new CustomEvent(${embed(event.name)}, { detail: ${embed(event.detail)} }));`,
+  );
+
+  return `${dispatches.join('\n')}\ntrue;`;
+}
+
+/**
  * Embeds a value as a JavaScript literal.
  *
  * `JSON.stringify` already escapes quotes and newlines; `<` is escaped too so a value containing
