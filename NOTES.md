@@ -108,6 +108,22 @@ replaced, with the error centred thousands of pixels down it. The height is now 
 starts, and `pageAreaHeight` returns a reported height only while a page is actually being shown;
 otherwise the page area is the visible screen, so loading and error views land in view.
 
+**The chosen text size goes in before the first paint.** The page sizes its text from a `--font-scale`
+variable that defaults to 1, and the only thing that changes it is an `app:fontScale` event — which the
+page ignores until it is ready. Sending it with the rest of the state after ready meant every load
+painted once at the default size and then jumped, which is visible on a reload because the loading
+overlay is not covering the page. The before-content script now sets the same variable up front, so the
+size is right from the first frame; the event still carries later changes when the reader presses the
+buttons. One mechanism, two triggers.
+
+**The Recently read strip refreshes on a pull.** Its list of ids comes from app state, so it is always
+current — returning from an article updates it with no extra work, because reading changes the state
+the front page renders from. Its *titles* are a cache, and a lookup that failed cached its placeholder,
+so an article whose title could not be fetched stayed "Article 4" until the app restarted. The front
+page's existing pull-to-refresh now also throws that cache away, and a generation counter stops a
+request that was already in flight from refilling it with the answer the reader just asked us to
+discard.
+
 **Jump links differ by page.** On the article the app does nothing: the page sets
 `scroll-margin-top: var(--inset-top)` on every element with an id, and the app supplies that inset, so
 the browser's own anchor scrolling already lands headings below the floating header. On the front page
@@ -116,14 +132,32 @@ the anchor navigation (`anchorTargetFor`), asks the page where that heading is
 (`measureAnchorScript`), and scrolls the scroll view itself. The consent string also lives in the
 fragment, so a load carrying `#consent=…` is explicitly not treated as a jump.
 
-**Article pull-to-refresh is not built.** The article web view scrolls itself, so a `RefreshControl`
-has nothing to pull: on iOS it needs its scroll view to bounce, and a wrapper with scrolling disabled
-never fires. Enabling the wrapper's scrolling instead would contend with the page's own scrolling and
-risk breaking something that works. The web view's built-in `pullToRefreshEnabled` reloads the web view
-directly, which would bypass the session — no new load id, no fresh consent capture, no loading state
-and no screen view — so it was rejected too. Doing it properly needs a gesture handler, which is a new
-dependency we chose not to add. The front page's pull-to-refresh is unaffected, and an article still
-reloads by being reopened or via Retry on the error view.
+**Article pull-to-refresh is driven by the page itself.** The article web view scrolls itself, so
+there is no native scroll view to hang a `RefreshControl` on: on iOS it needs its own scroll view to
+bounce, and a wrapper with scrolling disabled never fires. The web view's built-in
+`pullToRefreshEnabled` reloads the web view directly, bypassing the session entirely — no new load id,
+no fresh consent capture, no loading state, no screen view — so it was rejected too.
+
+Laying a gesture over the web view was tried next, with `react-native-gesture-handler`, and **it did
+not work**: the drag never reached the gesture. A web view owns its own scrolling, and on iOS its
+recogniser takes the touch before a handler on an ancestor view is offered it. Naming the web view
+with `simultaneousWithExternalGesture` did not change that. The dependency has been removed.
+
+What works is asking the page, which sees every touch. `pullProbeScript` in
+`src/lib/pullToRefresh.ts` is injected into the article alongside the read probe and reports four
+things — a pull starting, its distance as it grows, its release and its cancellation — as app-owned
+messages on the same channel everything else uses. It blocks nothing: the listeners are passive and
+nothing is ever prevented, so ordinary scrolling, sideways drags and the swipe-back from the edge
+behave exactly as before. A pull counts only from a single finger, starting within a pixel of the top,
+moving downward more than sideways; moves are throttled to one animation frame.
+
+The app decides what those reports mean. `pullState` turns the distance into an indicator position
+with resistance and a cap, and arms past a threshold; a release while armed calls the same `reload()`
+the front page uses, so the new load id, fresh consent, loading overlay and screen view all follow
+from the existing session. Nothing depends on iOS rubber-banding — the distance comes from the
+reported touch positions — so Android behaves the same, and `bounces` stays off. The read reporter is
+created once per article screen, so a pull cannot produce a second read event, and the one-indicator
+rule is kept through `showLoadingOverlay`.
 
 ## How the app finds the end of the article text
 
@@ -208,6 +242,21 @@ AI wrote most of the logic layer and its tests from the brief. Four things had t
   were removed with the wrapper rather than left unused.
 - **The consent fragment was briefly treated as a jump target.** `anchorTargetFor` matched
   `#consent=…`, so every consent reload triggered a pointless measurement. It is now excluded.
+- **The pull indicator mixed the two animation drivers.** The spring back to rest used the native
+  driver while the gesture wrote the same value from JS on every frame; a value the native driver has
+  taken over cannot be written from JS. The spring is JS-driven now.
+- **The first pull-to-refresh never started.** The pan gesture was added without telling it about the
+  web view's own drag, so on iOS the web view's recogniser took the touch and the pan was never offered
+  it. Nothing moved and nothing reloaded. The fix was to name the web view in
+  `simultaneousWithExternalGesture` so both recognise at once. Worth remembering: a gesture placed over
+  a native scrollable view has to declare its relationship to that view, or it is simply never asked.
+- **The at-top test was exact.** Scroll positions come back fractional, so comparing against zero could
+  refuse a pull when the reader is plainly at the top. `isAtTop` now allows a pixel of tolerance.
+- **Naming the web view in the gesture was not enough either.** The second attempt declared the pan
+  simultaneous with the web view's own drag, which is the library's intended answer, and the drag still
+  never arrived. The lesson is the general one: a web view is not a React Native scroll view, and a
+  gesture outside it cannot be relied on to see touches that happen inside it. Asking the page was the
+  approach that worked.
 
 ## Known bugs and observations (reported, not fixed)
 
