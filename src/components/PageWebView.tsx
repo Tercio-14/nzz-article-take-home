@@ -11,7 +11,15 @@
 // - The web view is keyed by `loadId`, so a reload really is a new document. Changing only the
 //   fragment would not reload the page, and the consent string lives in the fragment.
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   ActivityIndicator,
   LayoutChangeEvent,
@@ -32,6 +40,7 @@ import { anchorTargetFor, classifyNavigation, createOpenArticleDeduper } from '.
 import { parseWebViewMessage } from '../lib/messages';
 import { endOfTextProbeScript } from '../lib/endOfText';
 import { overlayFor } from '../lib/pageLayout';
+import { PullPhase, pullProbeScript } from '../lib/pullToRefresh';
 import {
   Insets,
   PageKind,
@@ -66,6 +75,10 @@ export type PageWebViewProps = {
   /** A jump link was tapped and the heading has been measured; the caller does the scrolling. */
   onAnchorMeasured?(fragment: string, top: number): void;
   onPhaseChange?(phase: SessionPhase): void;
+  /** How far the page is scrolled, so a screen can tell whether it is at the very top. */
+  onScroll?(offsetY: number): void;
+  /** Article only: the app's pull probe reporting a drag at the top of the page. */
+  onPull?(phase: PullPhase, distance: number): void;
   /** Where this host sits in its parent, so a jump link's offset can be turned into a scroll. */
   onLayout?(event: LayoutChangeEvent): void;
   /**
@@ -97,6 +110,8 @@ export const PageWebView = forwardRef<PageWebViewHandle, PageWebViewProps>(funct
     onEndOfText,
     onAnchorMeasured,
     onPhaseChange,
+    onScroll,
+    onPull,
     onLayout,
     showLoadingOverlay = true,
     palette,
@@ -142,6 +157,10 @@ export const PageWebView = forwardRef<PageWebViewHandle, PageWebViewProps>(funct
     // against a second install itself, so a duplicate ready cannot start a second poller.
     if (page === 'article' && articleIdRef.current) {
       inject(endOfTextProbeScript(articleIdRef.current, insetsRef.current ?? { top: 0, bottom: 0 }));
+
+      // Watching for a pull from inside the page: a gesture laid over the web view never receives
+      // the drag, because the web view's own scrolling takes the touch first.
+      inject(pullProbeScript());
     }
   }, [inject, page]);
 
@@ -237,6 +256,9 @@ export const PageWebView = forwardRef<PageWebViewHandle, PageWebViewProps>(funct
         case 'anchorOffset':
           onAnchorMeasured?.(message.fragment, message.top);
           break;
+        case 'pull':
+          onPull?.(message.phase, message.distance);
+          break;
         default:
           break;
       }
@@ -252,6 +274,7 @@ export const PageWebView = forwardRef<PageWebViewHandle, PageWebViewProps>(funct
       onOpenArticle,
       onEndOfText,
       onAnchorMeasured,
+      onPull,
     ],
   );
 
@@ -294,7 +317,14 @@ export const PageWebView = forwardRef<PageWebViewHandle, PageWebViewProps>(funct
   );
 
   const beforeContentLoaded = useMemo(
-    () => beforeContentLoadedScript({ appContext: APP_CONTEXT, insets: page === 'article' ? insets : undefined }),
+    () =>
+      beforeContentLoadedScript({
+        appContext: APP_CONTEXT,
+        insets: page === 'article' ? insets : undefined,
+        // The reader's chosen size, read as the document starts, so it is right from the first paint
+        // rather than jumping once the page is ready.
+        fontScale: pageStateRef.current.fontScale,
+      }),
     // Captured once per document: the page reads it at startup and later changes arrive as app:insets.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [page, load?.id],
@@ -321,9 +351,13 @@ export const PageWebView = forwardRef<PageWebViewHandle, PageWebViewProps>(funct
             }
           }}
           scrollEnabled={page === 'article'}
+          onScroll={event => onScroll?.(event.nativeEvent.contentOffset.y)}
           overScrollMode="never"
           allowsInlineMediaPlayback
-          {...(page === 'article' ? { contentInsetAdjustmentBehavior: 'never' as const } : {})}
+          // The article draws its own pull-to-refresh, so iOS must not rubber-band underneath it.
+          {...(page === 'article'
+            ? { contentInsetAdjustmentBehavior: 'never' as const, bounces: false }
+            : {})}
         />
       )}
 

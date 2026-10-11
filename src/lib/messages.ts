@@ -8,6 +8,7 @@
 
 import { END_OF_TEXT_MESSAGE } from './endOfText';
 import { ANCHOR_OFFSET_MESSAGE } from './pageScripts';
+import { PULL_MESSAGE, PullPhase } from './pullToRefresh';
 
 export type WebViewMessage =
   | { kind: 'ready'; page: 'front' | 'article'; articleId?: string }
@@ -18,6 +19,8 @@ export type WebViewMessage =
   | { kind: 'endOfText'; articleId: string }
   /** The app's own measurement of where a heading sits, for the front page's jump links. */
   | { kind: 'anchorOffset'; fragment: string; top: number }
+  /** The app's own pull probe reporting a drag at the top of an article. */
+  | { kind: 'pull'; phase: PullPhase; distance: number }
   | { kind: 'tracker'; raw: string }
   | { kind: 'ignored' };
 
@@ -57,6 +60,10 @@ export function parseWebViewMessage(raw: unknown): WebViewMessage {
       return isNonEmptyString(parsed.fragment) && isFiniteHeight(parsed.top)
         ? { kind: 'anchorOffset', fragment: parsed.fragment, top: parsed.top }
         : IGNORED;
+    case PULL_MESSAGE:
+      return isPullPhase(parsed.phase) && isFiniteHeight(parsed.distance)
+        ? { kind: 'pull', phase: parsed.phase, distance: parsed.distance }
+        : IGNORED;
     default:
       return IGNORED;
   }
@@ -88,6 +95,12 @@ function parseReady(parsed: Record<string, unknown>): WebViewMessage {
   }
 
   return IGNORED;
+}
+
+const PULL_PHASES: PullPhase[] = ['start', 'move', 'end', 'cancel'];
+
+function isPullPhase(value: unknown): value is PullPhase {
+  return typeof value === 'string' && (PULL_PHASES as string[]).includes(value);
 }
 
 function isFiniteHeight(value: unknown): value is number {

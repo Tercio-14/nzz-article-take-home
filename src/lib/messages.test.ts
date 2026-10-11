@@ -1,4 +1,5 @@
 import { END_OF_TEXT_MESSAGE } from './endOfText';
+import { PULL_MESSAGE } from './pullToRefresh';
 import { parseWebViewMessage } from './messages';
 
 const json = (value: unknown): string => JSON.stringify(value);
@@ -135,6 +136,29 @@ describe('parseWebViewMessage', () => {
 
     it('uses a type of its own, which the pages never send', () => {
       expect(END_OF_TEXT_MESSAGE).toBe('nzzapp:endOfText');
+    });
+  });
+
+  describe("the app's own pull probe", () => {
+    it('reads each phase the probe reports', () => {
+      for (const phase of ['start', 'move', 'end', 'cancel']) {
+        const raw = json({ type: PULL_MESSAGE, phase, distance: 40 });
+
+        expect(parseWebViewMessage(raw)).toEqual({ kind: 'pull', phase, distance: 40 });
+      }
+    });
+
+    it('ignores a phase it does not know', () => {
+      expect(parseWebViewMessage(json({ type: PULL_MESSAGE, phase: 'wobble', distance: 1 }))).toEqual({
+        kind: 'ignored',
+      });
+    });
+
+    it('ignores a distance that could not move an indicator', () => {
+      expect(parseWebViewMessage(json({ type: PULL_MESSAGE, phase: 'move' }))).toEqual({ kind: 'ignored' });
+      expect(parseWebViewMessage(json({ type: PULL_MESSAGE, phase: 'move', distance: 'far' }))).toEqual({
+        kind: 'ignored',
+      });
     });
   });
 

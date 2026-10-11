@@ -6,18 +6,23 @@
 
 import { useHeaderHeight } from '@react-navigation/elements';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
-import { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
-import { StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ActivityIndicator, Animated, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { PageWebView, PageWebViewHandle } from '../components/PageWebView';
 import { isBookmarked } from '../lib/appState';
 import { articleIdFromPath } from '../lib/links';
+import { SessionPhase } from '../lib/pageSession';
+import { PULL_THRESHOLD, PullPhase, pullState, shouldTriggerOnRelease } from '../lib/pullToRefresh';
 import { createReadReporter } from '../lib/readOnce';
 import { RootStackParamList } from '../navigation/routes';
 import { useAppState } from '../state/AppStateProvider';
 import { paletteFor } from '../theme';
 import { tracking } from '../tracking';
+
+/** How far above the header's lower edge the pull indicator sits, so it clears the text. */
+const INDICATOR_LIFT = 14;
 
 export function ArticleScreen({ navigation, route }: NativeStackScreenProps<RootStackParamList, 'Article'>) {
   const { path, articleId } = route.params;
@@ -35,6 +40,49 @@ export function ArticleScreen({ navigation, route }: NativeStackScreenProps<Root
   const insets = useMemo(
     () => ({ top: Math.round(headerHeight), bottom: Math.round(safeArea.bottom) }),
     [headerHeight, safeArea.bottom],
+  );
+
+  // Pull to refresh, driven by the page itself. A gesture laid over the web view never receives the
+  // drag — the web view's own scrolling takes the touch first — so an injected probe reports the
+  // touches instead and the app decides what they mean. The page only reports; it blocks nothing, so
+  // ordinary scrolling, sideways drags and the swipe-back are untouched.
+  const [pullRefreshing, setPullRefreshing] = useState(false);
+  const pullOffset = useRef(new Animated.Value(0)).current;
+
+  // Read inside the message handler, which must see the newest value without being re-created.
+  const busyRef = useRef(false);
+  busyRef.current = pullRefreshing;
+
+  const onPhaseChange = useCallback((next: SessionPhase) => {
+    // The pull is over as soon as the load is, whether it worked or not.
+    if (next !== 'loading') setPullRefreshing(false);
+  }, []);
+
+  // Driven from JS, not the native driver: the probe writes the value as the finger moves, and a
+  // value the native driver has taken over cannot be written from JS.
+  const settle = useCallback(() => {
+    Animated.spring(pullOffset, { toValue: 0, useNativeDriver: false, bounciness: 0 }).start();
+  }, [pullOffset]);
+
+  const onPull = useCallback(
+    (phase: PullPhase, distance: number) => {
+      // The page reports whenever it is at the top; whether that means anything is the app's call.
+      const state = pullState({ dragY: distance, atTop: true, busy: busyRef.current });
+
+      if (phase === 'move') {
+        pullOffset.setValue(state.offset);
+
+        return;
+      }
+
+      if (phase === 'end' && shouldTriggerOnRelease(state)) {
+        setPullRefreshing(true);
+        page.current?.reload();
+      }
+
+      if (phase !== 'start') settle();
+    },
+    [pullOffset, settle],
   );
 
   // One reporter per article screen. The README asks for one read event each time a screen is opened
@@ -100,19 +148,39 @@ export function ArticleScreen({ navigation, route }: NativeStackScreenProps<Root
       {/* The contents links and the Jump button need no code here: the page sets
           `scroll-margin-top: var(--inset-top)` on every element with an id, and the app supplies that
           inset, so its own anchor scrolling already lands headings below this header. */}
-      {/* Not built: pull-to-refresh. The article web view scrolls itself, so a RefreshControl has
-          nothing to pull — and making the wrapper scrollable would fight the page's own scrolling.
-          See NOTES.md; the header's Retry on the error view and reopening the article still reload. */}
-      <PageWebView
-        ref={page}
-        page="article"
-        path={path}
-        articleId={articleId}
-        insets={insets}
-        palette={palette}
-        onEndOfText={onEndOfText}
-        onOpenArticle={openArticle}
-      />
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          styles.pullIndicator,
+          {
+            top: insets.top - INDICATOR_LIFT,
+            opacity: pullOffset.interpolate({
+              inputRange: [0, PULL_THRESHOLD],
+              outputRange: [0, 1],
+              extrapolate: 'clamp',
+            }),
+            transform: [{ translateY: pullOffset }],
+          },
+        ]}
+      >
+        <ActivityIndicator color={palette.text} />
+      </Animated.View>
+
+      <Animated.View style={[styles.screen, { transform: [{ translateY: pullOffset }] }]}>
+        <PageWebView
+          ref={page}
+          page="article"
+          path={path}
+          articleId={articleId}
+          insets={insets}
+          palette={palette}
+          showLoadingOverlay={!pullRefreshing}
+          onEndOfText={onEndOfText}
+          onOpenArticle={openArticle}
+          onPhaseChange={onPhaseChange}
+          onPull={onPull}
+        />
+      </Animated.View>
     </View>
   );
 }
@@ -138,6 +206,14 @@ function HeaderButton({
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
+  },
+  // Sits over the page just below the floating header and follows the finger.
+  pullIndicator: {
+    alignItems: 'center',
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    zIndex: 1,
   },
   actions: {
     alignItems: 'center',
