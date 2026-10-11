@@ -108,11 +108,46 @@ replaced, with the error centred thousands of pixels down it. The height is now 
 starts, and `pageAreaHeight` returns a reported height only while a page is actually being shown;
 otherwise the page area is the visible screen, so loading and error views land in view.
 
+**Jump links differ by page.** On the article the app does nothing: the page sets
+`scroll-margin-top: var(--inset-top)` on every element with an id, and the app supplies that inset, so
+the browser's own anchor scrolling already lands headings below the floating header. On the front page
+it cannot work that way — the page does not scroll, the native scroll view does — so the app notices
+the anchor navigation (`anchorTargetFor`), asks the page where that heading is
+(`measureAnchorScript`), and scrolls the scroll view itself. The consent string also lives in the
+fragment, so a load carrying `#consent=…` is explicitly not treated as a jump.
+
+**Article pull-to-refresh is not built.** The article web view scrolls itself, so a `RefreshControl`
+has nothing to pull: on iOS it needs its scroll view to bounce, and a wrapper with scrolling disabled
+never fires. Enabling the wrapper's scrolling instead would contend with the page's own scrolling and
+risk breaking something that works. The web view's built-in `pullToRefreshEnabled` reloads the web view
+directly, which would bypass the session — no new load id, no fresh consent capture, no loading state
+and no screen view — so it was rejected too. Doing it properly needs a gesture handler, which is a new
+dependency we chose not to add. The front page's pull-to-refresh is unaffected, and an article still
+reloads by being reopened or via Retry on the error view.
+
 ## How the app finds the end of the article text
 
-_To fill in: the injected probe over `.articlecomponent.text p`, and what we would ask the web team
-for instead (for example an explicit end-of-text marker or an event) so the app would not have to
-guess from the DOM._
+The page will not say: it exposes neither where its text ends nor how far the reader has got, and its
+own "end of text" line is for checking our work, not for reading. So the app injects its own probe
+(`src/lib/endOfText.ts`). The probe takes the last `<p>` inside `.articlecomponent.text` — everything
+after it is the "Ask the newsroom" box, the related links and "More from the newsroom", none of which
+is the article — and reports when that paragraph's bottom edge is inside the viewport minus the app's
+insets. It checks on scroll, on resize and on a 500 ms timer, because the layout also moves without
+either: the late map, the ask box and a font change all push the last line around. It reads the inset
+values from the CSS variables the app already sets, so a later `app:insets` event is picked up without
+re-injecting, and it guards against being installed twice.
+
+**Once means once per article screen**, which is what the brief asks for: a reload reports nothing
+further, while closing the article and opening it again is a new screen and counts again.
+`src/lib/readOnce.ts` enforces that; the probe is free to fire once per document and the reporter
+absorbs the difference. An article short enough to show its last line at load counts immediately — it
+has been on screen — which is also what the page's own check does.
+
+**What we would ask the web team for:** a single explicit signal — either an element we can rely on
+(`<div data-end-of-text>` at the end of the text) or, better, an event the page posts when its own
+check fires, since the page already does this calculation for itself. Today the app depends on the
+`.articlecomponent.text p` selector, which is the web team's markup and could change in any deploy
+without the app knowing; a contract would survive that.
 
 ## Part 3 (offline): not built, how it would be built
 
@@ -165,6 +200,14 @@ AI wrote most of the logic layer and its tests from the brief. Four things had t
   the script ends with `true;` and separately evaluates it.
 - **`StyleSheet.absoluteFillObject` does not exist in React Native 0.86's types.** The overlay style now
   sets `position` and the four edges explicitly.
+- **A test asserted the wrong thing about escaping.** It checked that the generated script did not
+  *contain* the hostile string, but the string legitimately appears inside a quoted JSON literal, which
+  is exactly what makes it safe. The test now runs the script and checks that nothing executed and the
+  value came back intact.
+- **Dead state left behind when article pull-to-refresh was reverted.** The phase and refreshing state
+  were removed with the wrapper rather than left unused.
+- **The consent fragment was briefly treated as a jump target.** `anchorTargetFor` matched
+  `#consent=…`, so every consent reload triggered a pointless measurement. It is now excluded.
 
 ## Known bugs and observations (reported, not fixed)
 
