@@ -1,0 +1,22 @@
+# NZZ take-home: working rules
+
+- `README.md` is the spec. Re-read the relevant section before each task. Build Parts 1 and 2 only. Part 3 (offline) is NOT built; `NOTES.md` describes how it would be built.
+- NEVER edit anything in `fixture/` or `sdk/`. `sdk/tracker.ts` is copied unchanged to `src/vendor/tracker.ts` (keep it byte-identical). Bugs found in `fixture/` or `sdk/` go to the "Known bugs" section of `NOTES.md`.
+- NEVER run `git add`/`commit`/`push` or change git config. The user makes every commit and push themselves in VS Code. At the end of every task: run `git status`, list changed files, and suggest one commit message (plain subject line + short body). One task = one commit. Do not start the next task unprompted.
+- Check before you act: never redo, reinstall or overwrite what already exists.
+- Stack: Expo (TypeScript), development builds via `npx expo run:ios` / `npx expo run:android` (not Expo Go), `react-native-webview`, React Navigation native stack, AsyncStorage for persisted state.
+- Put logic in pure TypeScript modules with no React Native imports (state machines, message parser, tracker gate, read-once, queues) and unit-test them with Jest. UI components stay thin.
+- Base URL: iOS simulator `http://localhost:8787`, Android emulator `http://10.0.2.2:8787`, configurable in one config file. Android must allow cleartext HTTP (`expo-build-properties`); iOS must allow local networking (`NSAllowsLocalNetworking` in `app.json` `infoPlist`) so a physical iPhone on a LAN IP works.
+- Keep a running `NOTES.md` (<= 2 pages at the end) following the README's required topics; update it each task with what was decided and why, and note where AI output had to be corrected.
+
+## Verified facts about the kit
+
+- Pages ignore every `app:*` event dispatched before they post `{type:'ready'}`; so: wait for ready, then send the initial state once. A duplicate ready (article 5) must not resend initial state. Article 4 never sends ready; article 6 sends it after 3 s. Show the error state with retry after a ready timeout of 10 s.
+- Messages on the channel can be raw strings (`'tp:heartbeat'`) or JSON; `{type:'height', value:'auto'}` is junk. Parse in `try`/`catch`, validate shape, ignore everything else. Height must be a finite number >= 0.
+- `window.appInsets` (article) and `window.appContext` `{appVersion, appBuild, os, deviceType}` (both pages) must be set via `injectedJavaScriptBeforeContentLoaded`.
+- Consent: pages read `#consent=<value>` once at document start. A fragment-only URL change is NOT a reload, so any load with a new consent value must be a real new load (remount the WebView with a new key). Query strings (e.g. `?ref=related`) must be preserved and travel with opened articles.
+- Tracker (`sdk/tracker.ts`): `newTracker` throws on a duplicate namespace and there is no teardown, so always `getTracker('news-app') ?? newTracker(...)`. The web view callback DROPS events if no tracker exists yet and fans out to all trackers. So: create exactly one tracker, only after `/consent` has answered with a non-null string; before that, queue raw WebView messages and the app's own events (cap 500), and replay them in order once the tracker exists. Nothing may reach `/collect` before then.
+- Article 3's teaser sends `openArticle` AND navigates via its `href`. Funnel both into one `openArticle(path)` with a 1 s per-path dedupe so only one screen is pushed. Use `onShouldStartLoadWithRequest`: allow the initial load and same-document hash navigation, push a screen for `/article/` paths on the server origin, send everything else to `Linking.openURL` and block it. `target=_blank` links must work on both platforms.
+- Read detection: inject a script that finds the last element matching `.articlecomponent.text p`, and reports once when it is fully inside the viewport minus the app's top and bottom insets (check on scroll, resize and a 500 ms poll). The app tracks the read event once per article-screen instance. Never read the page's status box or `/page-events`.
+- Layouts: front = native vertical `ScrollView` with [Recently read strip, WebView with `scrollEnabled={false}` and height from valid height messages, native footer]; article = WebView fills the screen and scrolls itself, with a translucent native header floating over it.
+- Persisted app state (`fontScale`, `theme`, `bookmarks`, read ids) lives in one store shared by both screens; going back never reloads the screen below.
