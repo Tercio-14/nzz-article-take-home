@@ -43,12 +43,40 @@ export type AppEventName = (typeof APP_EVENTS)[number];
  *
  * Ends with `true;` because a web view warns when injected script evaluates to an object.
  */
-export function beforeContentLoadedScript(options: { appContext: AppContext; insets?: Insets }): string {
+export function beforeContentLoadedScript(options: {
+  appContext: AppContext;
+  insets?: Insets;
+  /** The reader's chosen text size, applied before the first paint. */
+  fontScale?: number;
+}): string {
   const lines = [`window.appContext = ${embed(options.appContext)};`];
 
   if (options.insets) lines.push(`window.appInsets = ${embed(options.insets)};`);
 
+  // The page sizes its text from `--font-scale`, defaulting to 1, and only learns the reader's choice
+  // from an `app:fontScale` event — which it ignores until it is ready. Waiting for that means every
+  // load paints once at the default size and then jumps. Setting the same property up front removes
+  // the jump; the event still carries later changes when the reader presses the buttons.
+  if (options.fontScale !== undefined) lines.push(fontScaleLines(options.fontScale));
+
   return `${lines.join('\n')}\ntrue;`;
+}
+
+/** Sets the text size now, or as soon as there is a document to set it on. */
+function fontScaleLines(fontScale: number): string {
+  return `(function () {
+  var scale = ${embed(String(fontScale))};
+
+  function apply() {
+    if (!document.documentElement) return false;
+
+    document.documentElement.style.setProperty('--font-scale', scale);
+
+    return true;
+  }
+
+  if (!apply()) document.addEventListener('readystatechange', apply);
+})();`;
 }
 
 /** One `app:*` event, for a change the reader made after the page was ready. */

@@ -20,6 +20,28 @@ type FakeWindow = {
   dispatchEvent(event: { name: string; detail: unknown }): void;
 };
 
+/** A document just complete enough for the before-content script to set a CSS variable on. */
+function fakeDocument() {
+  const properties: Record<string, string> = {};
+  const listeners: (() => void)[] = [];
+
+  return {
+    properties,
+    listeners,
+    documentElement: { style: { setProperty: (name: string, value: string) => { properties[name] = value; } } },
+    addEventListener: (_name: string, handler: () => void) => listeners.push(handler),
+  };
+}
+
+/** Runs a before-content script against a fake document, the way a web view would at startup. */
+function evaluateBeforeContent(script: string, document: ReturnType<typeof fakeDocument> | { documentElement: null; addEventListener: (n: string, h: () => void) => void }) {
+  const window: Record<string, unknown> = {};
+
+  new Function('window', 'document', script)(window, document);
+
+  return window;
+}
+
 /**
  * Runs a generated script the way a web view would: as source, against a window it does not control.
  * Nothing here imports the module under test, so a script that does not really work cannot pass.
@@ -292,5 +314,57 @@ describe('measureAnchorScript', () => {
     const posted = measure({ fragment: '";window.pwned=1;"', id: '";window.pwned=1;"' });
 
     expect(JSON.parse(posted[0]).fragment).toBe('";window.pwned=1;"');
+  });
+});
+
+describe('beforeContentLoadedScript and the text size', () => {
+  it('sets the chosen size before the page draws, so it never starts at the default', () => {
+    const document = fakeDocument();
+
+    evaluateBeforeContent(beforeContentLoadedScript({ appContext: APP_CONTEXT, fontScale: 1.3 }), document);
+
+    expect(document.properties['--font-scale']).toBe('1.3');
+  });
+
+  it('sets the default size explicitly too, so a reset really resets', () => {
+    const document = fakeDocument();
+
+    evaluateBeforeContent(beforeContentLoadedScript({ appContext: APP_CONTEXT, fontScale: 1 }), document);
+
+    expect(document.properties['--font-scale']).toBe('1');
+  });
+
+  it('touches nothing when no size is given', () => {
+    const document = fakeDocument();
+
+    evaluateBeforeContent(beforeContentLoadedScript({ appContext: APP_CONTEXT }), document);
+
+    expect(document.properties['--font-scale']).toBeUndefined();
+  });
+
+  it('waits for a document when there is not one yet, rather than throwing', () => {
+    const late = fakeDocument();
+    const notReady = {
+      documentElement: null,
+      addEventListener: (_name: string, handler: () => void) => late.listeners.push(handler),
+    };
+
+    expect(() =>
+      evaluateBeforeContent(beforeContentLoadedScript({ appContext: APP_CONTEXT, fontScale: 1.2 }), notReady),
+    ).not.toThrow();
+
+    expect(late.listeners).toHaveLength(1);
+  });
+
+  it('still sets the app context alongside the size', () => {
+    const document = fakeDocument();
+    const window = evaluateBeforeContent(
+      beforeContentLoadedScript({ appContext: APP_CONTEXT, insets: INSETS, fontScale: 1.1 }),
+      document,
+    );
+
+    expect(window.appContext).toEqual(APP_CONTEXT);
+    expect(window.appInsets).toEqual(INSETS);
+    expect(document.properties['--font-scale']).toBe('1.1');
   });
 });
